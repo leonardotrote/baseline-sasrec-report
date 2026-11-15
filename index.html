@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SASRec Baseline MovieLens</title>
+<style>
+/* Mesmo sistema visual do relatório de Semantic IDs: duas abas sob um cabeçalho.
+   "Avaliação" = relatório rolável (seções com cards: o que é / gráfico / como ler / como é calculado).
+   "Exploração" = lista de usuários + detalhe do usuário. */
+:root {
+  --bg: #f4f5f7; --surface: #ffffff; --surface-2: #eceef2; --line: #dcdfe5;
+  --fg: #14171d; --fg-2: #4a5160; --muted: #767d8c;
+  --accent: #1f5fbf; --accent-soft: #e3ebf8;
+  --s1: #2a78d6; --s2: #eb6834;
+  --good: #1a7f37; --bad: #c2372f; --good-soft: #e3f3e7; --bad-soft: #fae4e2; --star: #b07800;
+  --font-body: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, ui-monospace, "SF Mono", Menlo, monospace;
+  --radius: 8px; --header-h: 56px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101216; --surface: #181b21; --surface-2: #21252d; --line: #2d323c;
+    --fg: #eceef2; --fg-2: #b6bcc8; --muted: #8a91a0;
+    --accent: #6ea3f0; --accent-soft: #1c2940;
+    --s1: #3987e5; --s2: #d95926;
+    --good: #4cc26a; --bad: #f0675f; --good-soft: #16301e; --bad-soft: #3a1c1a; --star: #f2c14e;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101216; --surface: #181b21; --surface-2: #21252d; --line: #2d323c;
+  --fg: #eceef2; --fg-2: #b6bcc8; --muted: #8a91a0;
+  --accent: #6ea3f0; --accent-soft: #1c2940;
+  --s1: #3987e5; --s2: #d95926;
+  --good: #4cc26a; --bad: #f0675f; --good-soft: #16301e; --bad-soft: #3a1c1a; --star: #f2c14e;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { scroll-padding-top: calc(var(--header-h) + 56px); }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--font-body); }
+h1, h2, h3, h4 { margin: 0; line-height: 1.25; text-wrap: balance; }
+h2 { font-size: 1.25rem; }
+h3 { font-size: 1rem; }
+p { margin: 0; }
+button, input, select { font: inherit; color: var(--fg); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mono { font-family: var(--font-mono); font-size: .86em; }
+.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.small { font-size: .84rem; }
+.wrap { max-width: 1280px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+
+#fatal { display: none; background: var(--bad-soft); color: var(--bad); border-bottom: 1px solid var(--bad); padding: 12px 16px; }
+#fatal.show { display: block; }
+
+/* cabeçalho */
+.topbar { position: sticky; top: 0; z-index: 8; background: var(--surface); border-bottom: 1px solid var(--line); }
+.topbar .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding-block: 9px; min-height: var(--header-h); }
+.brand { font-weight: 700; font-size: 1.02rem; }
+.brand span { color: var(--muted); font-weight: 400; }
+.tabs { display: inline-flex; gap: 6px; }
+.tabs button { border: 1.5px solid var(--line); background: var(--surface); border-radius: 8px; padding: 7px 22px;
+  cursor: pointer; font-weight: 700; font-size: 1rem; color: var(--fg-2); }
+.tabs button:hover { border-color: var(--accent); color: var(--fg); }
+.tabs button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.facts { margin-left: auto; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: .82rem; color: var(--muted); }
+.facts b { color: var(--fg); font-weight: 600; }
+
+/* tooltip */
+#tip { position: fixed; z-index: 40; pointer-events: none; max-width: 360px; background: var(--surface); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; font-size: .82rem; line-height: 1.45; box-shadow: 0 6px 22px rgba(0,0,0,.2); }
+#tip .t { font-weight: 600; margin-bottom: 3px; color: var(--fg-2); }
+#tip .row { display: grid; grid-template-columns: 16px auto 1fr; gap: 6px; align-items: center; }
+#tip .row b { font-variant-numeric: tabular-nums; }
+.key { display: inline-block; width: 14px; height: 0; border-top: 2.5px solid var(--c); vertical-align: middle; }
+.key.dash { border-top-style: dashed; }
+
+/* ===== avaliação ===== */
+.subbar { position: sticky; top: var(--header-h); z-index: 7; background: var(--bg); border-bottom: 1px solid var(--line); }
+.subbar .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding-block: 8px; }
+.secnav { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: .86rem; }
+.secnav a { color: var(--fg-2); text-decoration: none; }
+.secnav a:hover { color: var(--accent); }
+.eval-section { padding-block: 30px; display: grid; gap: 16px; border-top: 1px solid var(--line); }
+.eval-section:first-child { border-top: 0; }
+.sec-head { display: grid; gap: 6px; max-width: 80ch; }
+.sec-head p { color: var(--fg-2); }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.cards.one { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 960px) { .cards { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 20px 16px;
+  display: grid; gap: 10px; min-width: 0; align-content: start; }
+.card .what { color: var(--muted); font-size: .86rem; }
+.reading { border-left: 2px solid var(--accent); padding: 1px 0 1px 10px; font-size: .86rem; color: var(--fg-2); }
+.reading ul { padding-left: 0; margin: 0; list-style: none; display: grid; gap: 3px; }
+.reading b { color: var(--fg); font-weight: 600; }
+.calc { font-size: .84rem; color: var(--fg-2); }
+.calc summary { cursor: pointer; color: var(--muted); font-size: .82rem; }
+.calc summary:hover { color: var(--accent); }
+.calc p { margin-top: 6px; }
+.calc code, .formula { font-family: var(--font-mono); font-size: .82rem; background: var(--surface-2); border-radius: 4px; padding: 1px 5px; }
+.legend { display: flex; flex-wrap: wrap; gap: 3px 14px; font-size: .8rem; color: var(--fg-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* números grandes */
+.kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 700px) { .kpis { grid-template-columns: minmax(0, 1fr); } }
+.kpi .k { color: var(--muted); font-size: .84rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.kpi .v { font-size: 2.2rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.kpi .p { color: var(--fg-2); font-size: .9rem; font-variant-numeric: tabular-nums; }
+.delta { font-weight: 600; }
+.delta.neg { color: var(--bad); } .delta.pos { color: var(--good); }
+
+/* gráficos */
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart text { fill: var(--muted); font-size: 11px; font-family: var(--font-body); }
+.chart text.lab { fill: var(--fg-2); font-size: 11.5px; }
+.chart .grid { stroke: var(--line); stroke-width: 1; opacity: .6; }
+.chart .ref { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.chart .guide-line { stroke: var(--muted); stroke-width: 1; }
+
+/* tabelas */
+.table-scroll { overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+th, td { padding: 8px 12px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+th { font-weight: 600; color: var(--fg-2); background: var(--surface-2); }
+th:first-child, td:first-child { text-align: left; }
+tr:last-child td { border-bottom: 0; }
+tr.best td { background: var(--accent-soft); font-weight: 600; }
+.tag { display: inline-block; font-size: .74rem; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: #fff; margin-left: 6px; }
+
+/* ===== exploração ===== */
+#view-explore .layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 24px; padding-block: 24px; align-items: start; }
+@media (max-width: 900px) { #view-explore .layout { grid-template-columns: minmax(0, 1fr); } }
+.pane { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.users-pane { position: sticky; top: calc(var(--header-h) + 16px); display: flex; flex-direction: column;
+  max-height: calc(100vh - var(--header-h) - 40px); }
+@media (max-width: 900px) { .users-pane { position: static; max-height: 46vh; } }
+.users-pane .head { padding: 14px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
+input[type="search"], select { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; width: 100%; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.seg button { flex: 1; background: var(--surface); border: 0; padding: 5px 8px; cursor: pointer; font-size: .84rem; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.ulist { overflow-y: auto; padding: 6px; flex: 1; }
+.uitem { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; padding: 9px 10px;
+  border: 0; background: none; border-radius: 6px; cursor: pointer; text-align: left; font-size: .9rem; }
+.uitem:hover { background: var(--surface-2); }
+.uitem[aria-current="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.uitem .meta { color: var(--muted); font-size: .8rem; font-weight: 400; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.dot.hit { background: var(--good); } .dot.miss { background: var(--bad); }
+.more { padding: 8px 10px; color: var(--muted); font-size: .8rem; }
+
+.detail { display: grid; gap: 20px; min-width: 0; }
+.uhead h2 { font-size: 1.5rem; }
+.uhead p { color: var(--muted); margin-top: 4px; }
+.verdict { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 18px 22px; border-radius: var(--radius); }
+.verdict.hit { background: var(--good-soft); } .verdict.miss { background: var(--bad-soft); }
+.verdict .vtag { font-weight: 700; font-size: 1.1rem; }
+.verdict.hit .vtag { color: var(--good); } .verdict.miss .vtag { color: var(--bad); }
+.verdict .pos { margin-left: auto; color: var(--fg-2); font-size: .9rem; font-variant-numeric: tabular-nums; }
+.verdict .pos b { color: var(--fg); font-size: 1.4rem; }
+.cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 1100px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+.cols .card { padding: 18px 8px 10px; }
+.cols .card > h3, .cols .card > .what { padding: 0 12px; }
+ol.list { list-style: none; margin: 0; padding: 0; }
+ol.list li { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; align-items: baseline; padding: 12px; border-radius: 6px; }
+ol.list li + li { border-top: 1px solid var(--line); }
+ol.list li.target { background: var(--good-soft); }
+ol.list li.target, ol.list li.target + li { border-top-color: transparent; }
+ol.list li.dim { opacity: .45; }
+.n { color: var(--muted); font-size: .84rem; text-align: right; font-variant-numeric: tabular-nums; }
+.ttl { font-weight: 600; }
+.yr { color: var(--muted); font-weight: 400; }
+.gen { color: var(--muted); font-size: .84rem; margin-top: 2px; }
+.side { font-size: .84rem; color: var(--muted); white-space: nowrap; }
+.side.ok { color: var(--good); font-weight: 700; }
+.stars { color: var(--star); letter-spacing: 1px; font-size: .84rem; }
+.link { border: 0; background: none; cursor: pointer; color: var(--accent); font-size: .88rem; padding: 10px 12px 2px; }
+.link:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div id="fatal" role="alert"></div>
+
+<header class="topbar">
+  <div class="wrap">
+    <span class="brand">SASRec <span>· baseline · MovieLens 1M</span></span>
+    <div class="tabs" role="tablist" aria-label="Seções do relatório">
+      <button type="button" role="tab" id="tab-eval" aria-controls="view-eval" aria-selected="true">Avaliação</button>
+      <button type="button" role="tab" id="tab-explore" aria-controls="view-explore" aria-selected="false" tabindex="-1">Exploração</button>
+    </div>
+    <div class="facts" id="facts"></div>
+  </div>
+</header>
+
+<!-- ===================== AVALIAÇÃO ===================== -->
+<main id="view-eval" role="tabpanel" aria-labelledby="tab-eval">
+  <div class="subbar"><div class="wrap">
+    <nav class="secnav" aria-label="Seções da avaliação">
+      <a href="#sec-result">Resultado</a><a href="#sec-train">Treino</a><a href="#sec-evals">Avaliações</a><a href="#sec-config">Configuração</a>
+    </nav>
+  </div></div>
+  <div class="wrap" id="eval-body"></div>
+</main>
+
+<!-- ===================== EXPLORAÇÃO ===================== -->
+<main id="view-explore" role="tabpanel" aria-labelledby="tab-explore" hidden>
+  <div class="wrap layout">
+    <aside class="pane users-pane" aria-label="Usuários">
+      <div class="head">
+        <input type="search" id="q" placeholder="Buscar usuário (id)…" aria-label="Buscar usuário" autocomplete="off">
+        <div class="seg" role="group" aria-label="Filtrar por resultado">
+          <button type="button" data-f="all" aria-pressed="true">Todos</button>
+          <button type="button" data-f="hit" aria-pressed="false">Acertos</button>
+          <button type="button" data-f="miss" aria-pressed="false">Erros</button>
+        </div>
+      </div>
+      <div class="ulist" id="ulist"></div>
+    </aside>
+    <div class="detail" id="detail"></div>
+  </div>
+</main>
+
+<div id="tip" hidden></div>
+
+<script src="data/ml-1m.js"></script>
+<script>
+(() => {
+const DATA = window.SASREC_DATA;
+if (!DATA) {
+  const f = document.getElementById("fatal");
+  f.textContent = "Não foi possível carregar os dados (data/ml-1m.js).";
+  f.classList.add("show");
+  return;
+}
+const K = DATA.k, ITEMS = DATA.items, USERS = DATA.users, H = DATA.history, P = DATA.paper, B = H.best, C = H.config;
+const MAXLEN = C.maxlen, LIST_LIMIT = 300, RECENT = 10;
+let current = null, showAll = false, filter = "all";
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const f4 = v => v.toFixed(4);
+const stars = r => r ? `<span class="stars" title="nota ${r}/5" aria-label="nota ${r} de 5">${"★".repeat(r)}</span>` : "";
+const isHit = u => u.rank !== undefined && u.rank < K;   // rank 0 = primeiro lugar (como no evaluate.py)
+const tip = $("tip");
+function showTip(html, ev) {
+  tip.innerHTML = html; tip.hidden = false;
+  tip.style.left = Math.min(ev.clientX + 14, innerWidth - tip.offsetWidth - 8) + "px";
+  tip.style.top = Math.min(ev.clientY + 14, innerHeight - tip.offsetHeight - 8) + "px";
+}
+const hideTip = () => { tip.hidden = true; };
+
+$("facts").innerHTML = `<span><b>${C.usernum.toLocaleString("pt-BR")}</b> usuários</span>
+  <span><b>${C.itemnum.toLocaleString("pt-BR")}</b> filmes</span><span><b>${H.epochs.length}</b> épocas</span>
+  <span>checkpoint <b>época ${B.epoch}</b></span>`;
+
+// ---------- abas (com estado na URL) ----------
+function setTab(name, push = true) {
+  const ev = name !== "explore";
+  $("tab-eval").setAttribute("aria-selected", ev); $("tab-explore").setAttribute("aria-selected", !ev);
+  $("tab-eval").tabIndex = ev ? 0 : -1; $("tab-explore").tabIndex = ev ? -1 : 0;
+  $("view-eval").hidden = !ev; $("view-explore").hidden = ev;
+  if (push) history.replaceState(null, "", ev ? "#avaliacao" : `#exploracao${current ? "/" + current.id : ""}`);
+  if (!ev && !current) renderUser(USERS[0]);
+}
+$("tab-eval").onclick = () => setTab("eval");
+$("tab-explore").onclick = () => setTab("explore");
+
+// ---------- gráfico de linha ----------
+function lineChart({ series, refs = [], xs, yFmt, label, width = 560, height = 230 }) {
+  const W = width, Hh = height, m = { l: 50, r: 46, t: 12, b: 30 };
+  const all = series.flatMap(s => s.points.map(p => p[1])).concat(refs.map(r => r.y));
+  let lo = Math.min(...all), hi = Math.max(...all);
+  const pad = (hi - lo || 1) * 0.08; lo -= pad; hi += pad;
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const X = x => m.l + (x - x0) / (x1 - x0 || 1) * (W - m.l - m.r);
+  const Y = y => m.t + (1 - (y - lo) / (hi - lo)) * (Hh - m.t - m.b);
+  const yt = [0, 1, 2, 3].map(i => lo + (hi - lo) * i / 3);
+  const step = (x1 - x0) / 5;
+  const xt = xs.length <= 12 ? xs : [x0, ...[1, 2, 3, 4, 5].map(i => Math.round(i * step / 10) * 10)];
+  let s = `<svg viewBox="0 0 ${W} ${Hh}" role="img" aria-label="${esc(label)}">`;
+  yt.forEach(v => s += `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${m.l - 8}" y="${Y(v) + 4}" text-anchor="end">${yFmt(v)}</text>`);
+  xt.forEach(v => s += `<text x="${X(v)}" y="${Hh - m.b + 18}" text-anchor="middle">${v}</text>`);
+  refs.forEach(r => s += `<line class="ref" x1="${m.l}" x2="${W - m.r}" y1="${Y(r.y)}" y2="${Y(r.y)}"/>`);
+  series.forEach(se => {
+    s += `<polyline fill="none" stroke="${se.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${se.points.map(p => `${X(p[0])},${Y(p[1])}`).join(" ")}"/>`;
+    if (se.points.length <= 30) se.points.forEach(p => s += `<circle cx="${X(p[0])}" cy="${Y(p[1])}" r="4" fill="${se.color}" stroke="var(--surface)" stroke-width="2"/>`);
+    const last = se.points[se.points.length - 1];
+    if (se.label) s += `<text class="lab" x="${X(last[0]) + 8}" y="${Y(last[1]) + 4 + (se.dy || 0)}">${esc(se.label)}</text>`;
+  });
+  s += `<line class="guide-line" y1="${m.t}" y2="${Hh - m.b}" x1="0" x2="0" style="display:none"/>
+    <rect class="hit" x="${m.l}" y="${m.t}" width="${W - m.l - m.r}" height="${Hh - m.t - m.b}" fill="transparent"/></svg>`;
+  const id = "ch" + Math.random().toString(36).slice(2, 8);
+  const html = `<div class="chart" id="${id}">${s}</div>`;
+  const bind = () => {
+    const el = $(id), svg = el.querySelector("svg"), gl = el.querySelector(".guide-line"), hit = el.querySelector(".hit");
+    hit.addEventListener("mousemove", ev => {
+      const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+      const sx = pt.matrixTransform(svg.getScreenCTM().inverse()).x;
+      const xv = xs.reduce((a, b) => Math.abs(X(b) - sx) < Math.abs(X(a) - sx) ? b : a);
+      gl.setAttribute("x1", X(xv)); gl.setAttribute("x2", X(xv)); gl.style.display = "";
+      showTip(`<div class="t">Época ${xv}</div>` + series.map(se => {
+        const p = se.points.find(p => p[0] === xv);
+        return p ? `<div class="row"><span class="key" style="--c:${se.color}"></span><span>${esc(se.name)}</span><b>${yFmt(p[1], true)}</b></div>` : "";
+      }).join("") + refs.map(r => `<div class="row"><span class="key dash" style="--c:var(--muted)"></span><span>${esc(r.name)}</span><b>${yFmt(r.y, true)}</b></div>`).join(""), ev);
+    });
+    hit.addEventListener("mouseleave", () => { hideTip(); gl.style.display = "none"; });
+  };
+  return { html, bind };
+}
+const legend = items => `<div class="legend">${items.map(([c, n, dash]) =>
+  `<span><span class="key ${dash ? "dash" : ""}" style="--c:${c}"></span>${esc(n)}</span>`).join("")}</div>`;
+
+// ---------- aba Avaliação ----------
+function renderEval() {
+  const css = getComputedStyle(document.documentElement);
+  const c1 = css.getPropertyValue("--s1").trim(), c2 = css.getPropertyValue("--s2").trim();
+  const pct = (a, b) => { const d = (a - b) / b * 100; return `<span class="delta ${d < 0 ? "neg" : "pos"}">${d >= 0 ? "+" : ""}${d.toFixed(1)}%</span>`; };
+  const xs = H.evals.map(e => e.epoch);
+  const mins = H.epochs.reduce((s, e) => s + e.time, 0) / 60;
+  const paperName = "Paper (valor final)";
+  const charts = {
+    loss: lineChart({ xs: H.epochs.map(e => e.epoch), label: "Loss por época", width: 1180, height: 220,
+      yFmt: (v, full) => v.toFixed(full ? 4 : 2),
+      series: [{ name: "Loss", color: c1, points: H.epochs.map(e => [e.epoch, e.loss]) }] }),
+    hr: lineChart({ xs, label: "HR@10 por avaliação", yFmt: (v, full) => v.toFixed(full ? 4 : 3),
+      series: [{ name: "Validação", label: "valid", color: c1, points: H.evals.map(e => [e.epoch, e.hr_valid]) },
+               { name: "Teste", label: "teste", color: c2, dy: 12, points: H.evals.map(e => [e.epoch, e.hr_test]) }],
+      refs: [{ name: paperName, y: P.hr10 }] }),
+    ndcg: lineChart({ xs, label: "NDCG@10 por avaliação", yFmt: (v, full) => v.toFixed(full ? 4 : 3),
+      series: [{ name: "Validação", label: "valid", color: c1, points: H.evals.map(e => [e.epoch, e.ndcg_valid]) },
+               { name: "Teste", label: "teste", color: c2, dy: 12, points: H.evals.map(e => [e.epoch, e.ndcg_test]) }],
+      refs: [{ name: paperName, y: P.ndcg10 }] }),
+  };
+  const lg = legend([[c1, "Validação"], [c2, "Teste"], ["var(--muted)", paperName, true]]);
+  const cfg = [["maxlen", "Tamanho máx. da sequência"], ["hidden_units", "Dimensão d"], ["num_blocks", "Blocos de self-attention"],
+    ["num_heads", "Cabeças de atenção"], ["dropout_rate", "Dropout"], ["lr", "Learning rate"], ["batch_size", "Batch size"],
+    ["num_epochs", "Épocas"], ["usernum", "Usuários"], ["itemnum", "Itens"]];
+
+  $("eval-body").innerHTML = `
+  <section class="eval-section" id="sec-result">
+    <div class="sec-head"><h2>Resultado</h2>
+      <p>Desempenho no conjunto de teste do checkpoint salvo (época ${B.epoch}), comparado ao SASRec original no mesmo dataset.</p></div>
+    <div class="kpis">
+      <div class="card kpi"><div class="k">HR@10</div><div class="v">${f4(B.hr_test)}</div>
+        <div class="p">paper ${f4(P.hr10)} · ${pct(B.hr_test, P.hr10)}</div></div>
+      <div class="card kpi"><div class="k">NDCG@10</div><div class="v">${f4(B.ndcg_test)}</div>
+        <div class="p">paper ${f4(P.ndcg10)} · ${pct(B.ndcg_test, P.ndcg10)}</div></div>
+    </div>
+    <div class="card">
+      <div class="reading"><ul>
+        <li><b>O que considera:</b> para cada usuário, o último filme assistido é escondido e ranqueado junto com 100 filmes sorteados que ele não viu (101 candidatos).</li>
+        <li><b>HR@10:</b> fração de usuários em que o filme real ficou entre os 10 primeiros.</li>
+        <li><b>NDCG@10:</b> igual, mas pesa a posição: 1º lugar vale 1, 10º vale ≈ 0,29, fora do top-10 vale 0.</li>
+        <li><b>Leitura:</b> diferença abaixo de 1% para o paper indica que a implementação reproduz o SASRec original.</li>
+      </ul></div>
+      <details class="calc"><summary>Como é calculado</summary>
+        <p>Para cada usuário <span class="formula">rank = nº de candidatos com score maior que o do filme real</span> (0 = primeiro).
+        <span class="formula">HR@10 = média(rank &lt; 10)</span> e <span class="formula">NDCG@10 = média(1/log₂(rank+2) se rank &lt; 10)</span>.
+        Os negativos são sorteados entre itens fora do treino do usuário. Referência: ${esc(P.ref)}.</p></details>
+    </div>
+  </section>
+
+  <section class="eval-section" id="sec-train">
+    <div class="sec-head"><h2>Treino</h2>
+      <p>${H.epochs.length} épocas em ${mins.toFixed(0)} min, com avaliação a cada ${C.eval_every} épocas.</p></div>
+    <div class="cards one"><div class="card">
+      <h3>Loss por época</h3><div class="what">BCE média: score alto para o próximo item real, baixo para um negativo sorteado.</div>
+      ${charts.loss.html}
+      <div class="reading">Deve cair e estabilizar. Sozinha, não mede a qualidade do ranking: use HR e NDCG abaixo.</div>
+    </div></div>
+    <div class="cards">
+      <div class="card"><h3>HR@10</h3>${lg}${charts.hr.html}</div>
+      <div class="card"><h3>NDCG@10</h3>${lg}${charts.ndcg.html}</div>
+    </div>
+    <div class="card"><div class="reading"><ul>
+      <li><b>Validação</b> usa o penúltimo filme de cada usuário; <b>teste</b> usa o último.</li>
+      <li>O checkpoint salvo é o da época com maior NDCG@10 de <b>validação</b>; o teste só é reportado.</li>
+      <li>A linha tracejada é o valor final publicado no paper, não uma curva por época.</li>
+    </ul></div></div>
+  </section>
+
+  <section class="eval-section" id="sec-evals">
+    <div class="sec-head"><h2>Avaliações</h2><p>Saída do <span class="mono">evaluate.py</span> em cada avaliação.</p></div>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Época</th><th>HR@10 valid</th><th>NDCG@10 valid</th><th>HR@10 teste</th><th>NDCG@10 teste</th></tr></thead>
+      <tbody>${H.evals.map(e => `<tr class="${e.epoch === B.epoch ? "best" : ""}"><td>${e.epoch}${e.epoch === B.epoch ? '<span class="tag">checkpoint</span>' : ""}</td>
+        <td>${f4(e.hr_valid)}</td><td>${f4(e.ndcg_valid)}</td><td>${f4(e.hr_test)}</td><td>${f4(e.ndcg_test)}</td></tr>`).join("")}</tbody>
+    </table></div>
+  </section>
+
+  <section class="eval-section" id="sec-config">
+    <div class="sec-head"><h2>Configuração</h2><p>Hiperparâmetros do treino ao lado dos reportados no paper para o ML-1M.</p></div>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Parâmetro</th><th>Este treino</th><th>Paper</th></tr></thead>
+      <tbody>${cfg.map(([k, l]) => `<tr><td>${l}</td><td>${C[k] ?? "–"}</td><td>${P.config[k] ?? "–"}</td></tr>`).join("")}</tbody>
+    </table></div>
+  </section>`;
+  Object.values(charts).forEach(c => c.bind());
+}
+
+// ---------- aba Exploração ----------
+function row(i, n, side, cls) {
+  const [title, year, genres] = ITEMS[i];
+  return `<li class="${cls || ""}"><span class="n">${n}</span>
+    <div><div class="ttl">${esc(title)} <span class="yr">${year}</span></div><div class="gen">${esc(genres)}</div></div>
+    <span class="side ${cls === "target" ? "ok" : ""}">${side}</span></li>`;
+}
+
+function renderList() {
+  const q = $("q").value.trim();
+  const list = USERS.filter(u => (!q || String(u.id).startsWith(q)) &&
+    (filter === "all" || (filter === "hit" ? isHit(u) : u.rank !== undefined && !isHit(u))));
+  $("ulist").innerHTML = list.slice(0, LIST_LIMIT).map(u => `
+    <button type="button" class="uitem" data-id="${u.id}" aria-current="${current && current.id === u.id}">
+      <span>Usuário ${u.id} <span class="meta">· ${u.h.length} filmes</span></span>
+      ${u.rank !== undefined ? `<span class="dot ${isHit(u) ? "hit" : "miss"}" title="${isHit(u) ? "acertou" : "errou"}"></span>` : ""}
+    </button>`).join("") +
+    (list.length > LIST_LIMIT ? `<div class="more">${LIST_LIMIT} de ${list.length.toLocaleString("pt-BR")}. Use a busca.</div>` :
+     list.length ? "" : `<div class="more">Nenhum usuário.</div>`);
+}
+
+function renderUser(u) {
+  current = u;
+  const hist = u.h.map((i, idx) => ({ i, idx, r: u.r[idx] })).reverse();
+  const shown = showAll ? hist : hist.slice(0, RECENT);
+  let html = `<div class="uhead"><h2>Usuário ${u.id}</h2>
+    <p>${u.g === "M" ? "Homem" : "Mulher"}, ${esc(u.a)} anos · ${u.h.length} filmes assistidos</p></div>`;
+  if (u.target !== undefined) {
+    const [title, year] = ITEMS[u.target], hit = isHit(u);
+    html += `<div class="verdict ${hit ? "hit" : "miss"}">
+      <span class="vtag">${hit ? "✓ Acertou" : "✗ Errou"}</span>
+      <span>Próximo filme real: <b>${esc(title)}</b> <span class="yr">${year}</span> ${stars(u.r[u.r.length - 1])}</span>
+      <span class="pos">posição <b>${u.rank + 1}</b> de 101</span></div>
+      <div class="reading"><b>Assistiu por último</b> é o que o modelo recebeu. <b>Top-${K}</b> é como ele ordenou os 101 candidatos
+      da avaliação (o filme real + 100 sorteados que o usuário não viu). Acerto = filme real no top-${K}. Os demais itens da lista vêm do
+      sorteio, então não são a recomendação final do modelo.</div>`;
+  }
+  html += `<div class="cols">
+    <div class="card"><h3>Assistiu por último</h3><div class="what">Mais recente primeiro, com a nota dada pelo usuário.</div>
+      <ol class="list">${shown.map(e => row(e.i, e.idx + 1, stars(e.r), u.h.length - e.idx > MAXLEN ? "dim" : "")).join("")}</ol>
+      ${hist.length > RECENT ? `<button type="button" class="link" id="toggle">${showAll ? "Mostrar só os últimos " + RECENT : `Ver histórico completo (${hist.length})`}</button>` : ""}
+      ${showAll && u.h.length > MAXLEN ? `<div class="what" style="padding:6px 12px 0">Esmaecidos: fora da janela de ${MAXLEN} filmes lida pelo modelo.</div>` : ""}
+    </div>`;
+  html += u.target !== undefined
+    ? `<div class="card"><h3>Top-${K} entre os 101 candidatos</h3><div class="what">Ordem do modelo; o filme real aparece destacado se estiver aqui.</div>
+       <ol class="list">${u.rec.map((i, n) => row(i, n + 1, i === u.target ? "✓ real" : "", i === u.target ? "target" : "")).join("")}</ol></div>`
+    : `<div class="card"><div class="what">Sem item de teste (sequência curta demais).</div></div>`;
+  html += `</div>`;
+  $("detail").innerHTML = html;
+  const t = $("toggle");
+  if (t) t.onclick = () => { showAll = !showAll; renderUser(u); };
+  renderList();
+  if (!$("view-explore").hidden) history.replaceState(null, "", `#exploracao/${u.id}`);
+}
+
+$("ulist").addEventListener("click", e => {
+  const el = e.target.closest(".uitem");
+  if (el) { showAll = false; renderUser(USERS[+el.dataset.id - 1]); window.scrollTo({ top: 0 }); }
+});
+$("q").addEventListener("input", renderList);
+document.querySelectorAll(".seg button").forEach(b => b.onclick = () => {
+  filter = b.dataset.f;
+  document.querySelectorAll(".seg button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  renderList();
+});
+
+// ---------- início ----------
+renderEval();
+const m = location.hash.match(/^#exploracao(?:\/(\d+))?/);
+if (m) {
+  const u = m[1] && USERS[+m[1] - 1];
+  renderUser(u || USERS[0]);
+  setTab("explore", false);
+} else {
+  renderList();
+}
+})();
+</script>
+</body>
+</html>
