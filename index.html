@@ -106,14 +106,16 @@ button, input, select { font: inherit; color: var(--fg); }
 .legend { display: flex; flex-wrap: wrap; gap: 3px 14px; font-size: .8rem; color: var(--fg-2); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 
-/* números grandes */
-.kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-@media (max-width: 700px) { .kpis { grid-template-columns: minmax(0, 1fr); } }
-.kpi .k { color: var(--muted); font-size: .84rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
-.kpi .v { font-size: 2.2rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
-.kpi .p { color: var(--fg-2); font-size: .9rem; font-variant-numeric: tabular-nums; }
 .delta { font-weight: 600; }
 .delta.neg { color: var(--bad); } .delta.pos { color: var(--good); }
+
+.card.compact { padding: 14px 18px 12px; gap: 8px; }
+table.mini { width: auto; justify-self: start; font-size: .92rem; }
+table.mini th:not(:first-child), table.mini td:not(:first-child) { padding-left: 28px; }
+table.mini th, table.mini td { padding: 5px 22px 5px 0; background: none; border-bottom: 1px solid var(--line); }
+table.mini th { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+table.mini tr:last-child td { border-bottom: 0; }
+.calc a { color: var(--accent); }
 
 /* gráficos */
 .chart { position: relative; }
@@ -343,29 +345,29 @@ function renderEval() {
   const lg = legend([[c1, "Validação"], [c2, "Teste"], ["var(--muted)", paperName, true]]);
   const cfg = [["maxlen", "Tamanho máx. da sequência"], ["hidden_units", "Dimensão d"], ["num_blocks", "Blocos de self-attention"],
     ["num_heads", "Cabeças de atenção"], ["dropout_rate", "Dropout"], ["lr", "Learning rate"], ["batch_size", "Batch size"],
-    ["num_epochs", "Épocas"], ["usernum", "Usuários"], ["itemnum", "Itens"]];
+    ["optimizer", "Otimizador"], ["num_epochs", "Épocas"], ["usernum", "Usuários"], ["itemnum", "Itens"]];
+  const val = v => v === null || v === undefined ? '<span class="muted">não informado</span>' : esc(v);
 
   $("eval-body").innerHTML = `
   <section class="eval-section" id="sec-result">
     <div class="sec-head"><h2>Resultado</h2>
-      <p>Desempenho no conjunto de teste do checkpoint salvo (época ${B.epoch}), comparado ao SASRec original no mesmo dataset.</p></div>
-    <div class="kpis">
-      <div class="card kpi"><div class="k">HR@10</div><div class="v">${f4(B.hr_test)}</div>
-        <div class="p">paper ${f4(P.hr10)} · ${pct(B.hr_test, P.hr10)}</div></div>
-      <div class="card kpi"><div class="k">NDCG@10</div><div class="v">${f4(B.ndcg_test)}</div>
-        <div class="p">paper ${f4(P.ndcg10)} · ${pct(B.ndcg_test, P.ndcg10)}</div></div>
-    </div>
-    <div class="card">
-      <div class="reading"><ul>
-        <li><b>O que considera:</b> para cada usuário, o último filme assistido é escondido e ranqueado junto com 100 filmes sorteados que ele não viu (101 candidatos).</li>
-        <li><b>HR@10:</b> fração de usuários em que o filme real ficou entre os 10 primeiros.</li>
-        <li><b>NDCG@10:</b> igual, mas pesa a posição: 1º lugar vale 1, 10º vale ≈ 0,29, fora do top-10 vale 0.</li>
-        <li><b>Leitura:</b> diferença abaixo de 1% para o paper indica que a implementação reproduz o SASRec original.</li>
-      </ul></div>
-      <details class="calc"><summary>Como é calculado</summary>
-        <p>Para cada usuário <span class="formula">rank = nº de candidatos com score maior que o do filme real</span> (0 = primeiro).
-        <span class="formula">HR@10 = média(rank &lt; 10)</span> e <span class="formula">NDCG@10 = média(1/log₂(rank+2) se rank &lt; 10)</span>.
-        Os negativos são sorteados entre itens fora do treino do usuário. Referência: ${esc(P.ref)}.</p></details>
+      <p>Teste do checkpoint salvo (época ${B.epoch}) comparado ao SASRec original no ML-1M.</p></div>
+    <div class="card compact">
+      <table class="mini">
+        <thead><tr><th>Teste</th><th>Este modelo</th><th>Paper</th><th>Diferença</th></tr></thead>
+        <tbody>
+          <tr><td>HR@10</td><td><b>${f4(B.hr_test)}</b></td><td>${f4(P.hr10)}</td><td>${pct(B.hr_test, P.hr10)}</td></tr>
+          <tr><td>NDCG@10</td><td><b>${f4(B.ndcg_test)}</b></td><td>${f4(P.ndcg10)}</td><td>${pct(B.ndcg_test, P.ndcg10)}</td></tr>
+        </tbody>
+      </table>
+      <div class="reading">Diferença abaixo de 1%: a implementação reproduz o SASRec original.</div>
+      <details class="calc"><summary>O que as métricas consideram</summary>
+        <p>Para cada usuário, o último filme assistido é ranqueado junto com 100 filmes sorteados que ele não viu (101 candidatos).
+        <b>HR@10</b> = fração de usuários em que o filme real ficou no top-10. <b>NDCG@10</b> = igual, mas pesa a posição
+        (1º lugar vale 1, 10º ≈ 0,29, fora do top-10 vale 0).</p>
+        <p><span class="formula">rank = nº de candidatos com score maior que o do filme real</span> (0 = primeiro) ·
+        <span class="formula">HR@10 = média(rank &lt; 10)</span> · <span class="formula">NDCG@10 = média(1/log₂(rank+2) se rank &lt; 10)</span>.</p>
+        <p>Paper: <a href="${esc(P.url)}" target="_blank" rel="noopener">${esc(P.ref)}</a>, Tabela III.</p></details>
     </div>
   </section>
 
@@ -398,10 +400,11 @@ function renderEval() {
   </section>
 
   <section class="eval-section" id="sec-config">
-    <div class="sec-head"><h2>Configuração</h2><p>Hiperparâmetros do treino ao lado dos reportados no paper para o ML-1M.</p></div>
+    <div class="sec-head"><h2>Configuração</h2><p>Hiperparâmetros do treino ao lado dos reportados no paper para o ML-1M
+      (Seção IV-C, Tabela II e Tabela IV).</p></div>
     <div class="table-scroll"><table>
       <thead><tr><th>Parâmetro</th><th>Este treino</th><th>Paper</th></tr></thead>
-      <tbody>${cfg.map(([k, l]) => `<tr><td>${l}</td><td>${C[k] ?? "–"}</td><td>${P.config[k] ?? "–"}</td></tr>`).join("")}</tbody>
+      <tbody>${cfg.map(([k, l]) => `<tr><td>${l}</td><td>${val(C[k])}</td><td>${val(P.config[k])}</td></tr>`).join("")}</tbody>
     </table></div>
   </section>`;
   Object.values(charts).forEach(c => c.bind());
